@@ -1,5 +1,3 @@
-//#include <Arduino.h>
-
 #define FASTLED_ALLOW_INTERRUPTS 0
 #include <FastLED.h>
 FASTLED_USING_NAMESPACE
@@ -10,15 +8,33 @@ extern "C" {
 
 #include <Wire.h>
 #include <RtcDS3231.h>                        // Include RTC library by Makuna: https://github.com/Makuna/Rtc
+#include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
+#include <ESP8266HTTPUpdateServer.h>
+#include <FastLED.h>
+#include <FS.h>                               // Please read the instructions on http://arduino.esp8266.com/Arduino/versions/2.3.0/doc/filesystem.html#uploading-files-to-file-system
 #define countof(a) (sizeof(a) / sizeof(a[0]))
 #define NUM_LEDS 30                           // Total of 30 LED's     
 #define DATA_PIN D4                           // Change this if you are using another type of ESP board than a WeMos D1 Mini
 #define MILLI_AMPS 2400 
-#define COUNTDOWN_OUTPUT 5
+#define COUNTDOWN_OUTPUT D5
 
+#define WIFIMODE 2                            // 0 = Only Soft Access Point, 1 = Only connect to local WiFi network with UN/PW, 2 = Both
 
+#if defined(WIFIMODE) && (WIFIMODE == 0 || WIFIMODE == 2)
+  const char* APssid = "CLOCK_AP";        
+  const char* APpassword = "1234567890";  
+#endif
+  
+#if defined(WIFIMODE) && (WIFIMODE == 1 || WIFIMODE == 2)
+  #include "Credentials.h"                    // Create this file in the same directory as the .ino file and add your credentials (#define SID YOURSSID and on the second line #define PW YOURPASSWORD)
+  const char *ssid = SID;
+  const char *password = PW;
+#endif
 
 RtcDS3231<TwoWire> Rtc(Wire);
+ESP8266WebServer server(80);
+ESP8266HTTPUpdateServer httpUpdateServer;
 CRGB LEDs[NUM_LEDS];
 
 // Settings
@@ -89,6 +105,7 @@ void setup() {
       }
   }
 
+  WiFi.setSleepMode(WIFI_NONE_SLEEP);  
 
   delay(200);
   //Serial.setDebugOutput(true);
@@ -99,17 +116,49 @@ void setup() {
   FastLED.setMaxPowerInVoltsAndMilliamps(5, MILLI_AMPS);
   fill_solid(LEDs, NUM_LEDS, CRGB::Black);
   FastLED.show();
- 
 
-  //httpUpdateServer.setup(&server);
+  // WiFi - AP Mode or both
+#if defined(WIFIMODE) && (WIFIMODE == 0 || WIFIMODE == 2) 
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAP(APssid, APpassword);    // IP is usually 192.168.4.1
+  Serial.println();
+  Serial.print("SoftAP IP: ");
+  Serial.println(WiFi.softAPIP());
+#endif
+
+  // WiFi - Local network Mode or both
+#if defined(WIFIMODE) && (WIFIMODE == 1 || WIFIMODE == 2) 
+  byte count = 0;
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    // Stop if cannot connect
+    if (count >= 60) {
+      Serial.println("Could not connect to local WiFi.");      
+      return;
+    }
+       
+    delay(500);
+    Serial.print(".");
+    LEDs[count] = CRGB::Green;
+    FastLED.show();
+    count++;
+  }
+  Serial.print("Local IP: ");
+  Serial.println(WiFi.localIP());
+
+  IPAddress ip = WiFi.localIP();
+  Serial.println(ip[3]);
+#endif   
+
+  httpUpdateServer.setup(&server);
 
   // Handlers
-  /*server.on("/color", HTTP_POST, []() {    
+  server.on("/color", HTTP_POST, []() {    
     r_val = server.arg("r").toInt();
     g_val = server.arg("g").toInt();
     b_val = server.arg("b").toInt();
     server.send(200, "text/json", "{\"result\":\"ok\"}");
-  });*/
+  });
 
   /*server.on("/setdate", HTTP_POST, []() { 
     // Sample input: date = "Dec 06 2009", time = "12:34:56"
@@ -161,20 +210,23 @@ void setup() {
     clockMode = 0;     
     server.send(200, "text/json", "{\"result\":\"ok\"}");
   });  
-  
+  */
   // Before uploading the files with the "ESP8266 Sketch Data Upload" tool, zip the files with the command "gzip -r ./data/" (on Windows I do this with a Git Bash)
   // *.gz files are automatically unpacked and served from your ESP (so you don't need to create a handler for each file).
   server.serveStatic("/", SPIFFS, "/", "max-age=86400");
-  server.begin(); */    
+  server.begin();     
 
-  /*SPIFFS.begin();
+  if (!SPIFFS.begin()){
+    Serial.println("An Error has occurred while mounting SPIFFS");
+    return;
+  }
   Serial.println("SPIFFS contents:");
   Dir dir = SPIFFS.openDir("/");
   while (dir.next()) {
     String fileName = dir.fileName();
     size_t fileSize = dir.fileSize();
     Serial.printf("FS File: %s, size: %s\n", fileName.c_str(), String(fileSize).c_str());
-  }*/
+  }
   Serial.println(); 
   
   digitalWrite(COUNTDOWN_OUTPUT, LOW);
@@ -182,7 +234,7 @@ void setup() {
 
 void loop(){
 
-  //server.handleClient(); 
+  server.handleClient(); 
   
   unsigned long currentMillis = millis();  
   if (currentMillis - prevTime >= 1000) {
@@ -341,7 +393,7 @@ void updateCountdown() {
     //endCountdown();
     countdownMilliSeconds = 0;
     endCountDownMillis = 0;
-    //digitalWrite(COUNTDOWN_OUTPUT, HIGH);
+    digitalWrite(COUNTDOWN_OUTPUT, HIGH);
     return;
   }  
 }
