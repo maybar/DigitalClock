@@ -14,7 +14,17 @@ C:\Users\Miguel\Documents\Arduino\Workspace\tools\ESP8266FS\tool\esp8266fs.jar
 
 
 
-
+Consumo
+Sin Leds: 80mA  400mW
+Brillo
+255         300mA
+128         200mA
+67          155mA
+50			130mA
+34          119mA
+21          111mA
+15          110mA
+10          110mA
 
 
 

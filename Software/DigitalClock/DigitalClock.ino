@@ -8,9 +8,10 @@
 #include <FS.h>                               // Please read the instructions on http://arduino.esp8266.com/Arduino/versions/2.3.0/doc/filesystem.html#uploading-files-to-file-system
 #define countof(a) (sizeof(a) / sizeof(a[0]))
 #define NUM_LEDS 30                           // Total of 30 LED's     
-#define DATA_PIN D4                           // Change this if you are using another type of ESP board than a WeMos D1 Mini
-#define MILLI_AMPS 2400 
-#define COUNTDOWN_OUTPUT D5
+#define DATA_PIN D4                           // OUTPUT_PIN - Change this if you are using another type of ESP board than a WeMos D1 Mini
+#define MILLI_AMPS 500                        // 500mA 
+#define PIR_PIN D7                            // INPUT_PIN
+#define COUNTDOWN_OUTPUT D2                   // OUTPUT_PIN
 
 #define WIFIMODE 2                            // 0 = Only Soft Access Point, 1 = Only connect to local WiFi network with UN/PW, 2 = Both
 
@@ -32,11 +33,11 @@ CRGB LEDs[NUM_LEDS];
 
 // Settings
 unsigned long prevTime = 0;
-byte r_val = 255;
-byte g_val = 255;
-byte b_val = 255;
+byte r_val = 19;
+byte g_val = 30;
+byte b_val = 230;
 bool dotsOn = true;
-byte brightness = 128;  
+byte brightness = 50;  
 float temperatureCorrection = -3.0;
 byte temperatureSymbol = 12;                  // 12=Celcius, 13=Fahrenheit check 'numbers'
 byte clockMode = 0;                           // Clock modes: 0=Clock, 1=Countdown, 2=Temperature, 3=Scoreboard
@@ -59,7 +60,7 @@ long numbers[] = {
   0b1110111,  // [6] 6
   0b0011100,  // [7] 7
   0b1111111,  // [8] 8
-  0b1111100,  // [9] 9
+  0b1111110,  // [9] 9
   0b0000000,  // [10] off
   0b1111000,  // [11] degrees symbol
   0b0011110,  // [12] C(elsius)
@@ -70,11 +71,36 @@ uint8_t hora=0;
 uint8_t minuto=0;
 uint8_t segundo = 0;
 
+// Timer: Auxiliary variables
+#define timeSeconds 10
+unsigned long now = millis();
+unsigned long lastTrigger = 0;
+boolean startTimer = false;
+int pir_status = 0;
+int old_pir_status = 0;
+int count_pir = 0;
+
 void updateClock();
 void updateCountdown();
 void updateTemperature();
 void updateScoreboard();
 void displayDots(CRGB color);
+
+/*void IRAM_ATTR detectsMovement() {
+  boolean pir_status = digitalRead(PIR_PIN);
+  if (pir_status == HIGH)
+  {
+    Serial.println("MOTION DETECTED!!!");
+    brightness = 255;
+  }
+  else
+  {
+    Serial.println("Passing to save energy !!!");
+    brightness = 10;
+  }
+  
+
+}*/
 
 void setup() {
   pinMode(COUNTDOWN_OUTPUT, OUTPUT);
@@ -144,7 +170,7 @@ void setup() {
   Serial.println(WiFi.localIP());
 
   IPAddress ip = WiFi.localIP();
-  Serial.println(ip[3]);
+
 #endif   
 
   httpUpdateServer.setup(&server);
@@ -176,11 +202,14 @@ void setup() {
     hora = compiled.Hour();
     minuto = compiled.Minute();
     segundo = compiled.Second();
+
+    digitalWrite(COUNTDOWN_OUTPUT, LOW);
   });
 
   server.on("/brightness", HTTP_POST, []() {    
     brightness = server.arg("brightness").toInt();    
     server.send(200, "text/json", "{\"result\":\"ok\"}");
+    Serial.println(brightness);
   });
   
   server.on("/countdown", HTTP_POST, []() {    
@@ -207,11 +236,13 @@ void setup() {
     hourFormat = server.arg("hourformat").toInt();
     clockMode = 0;     
     server.send(200, "text/json", "{\"result\":\"ok\"}");
+    digitalWrite(COUNTDOWN_OUTPUT, LOW);
   }); 
 
   server.on("/clock", HTTP_POST, []() {       
     clockMode = 0;     
     server.send(200, "text/json", "{\"result\":\"ok\"}");
+    digitalWrite(COUNTDOWN_OUTPUT, LOW);
   });  
   
   // Before uploading the files with the "ESP8266 Sketch Data Upload" tool, zip the files with the command "gzip -r ./data/" (on Windows I do this with a Git Bash)
@@ -231,16 +262,21 @@ void setup() {
     Serial.printf("FS File: %s, size: %s\n", fileName.c_str(), String(fileSize).c_str());
   }
   Serial.println(); 
+
+  //pinMode(COUNTDOWN_OUTPUT, OUTPUT);
+  //digitalWrite(COUNTDOWN_OUTPUT, LOW);
+
+  pinMode(PIR_PIN, INPUT);    //set again because some library rewrit the setting
   
-  digitalWrite(COUNTDOWN_OUTPUT, LOW);
+  // Set motionSensor pin as interrupt, assign interrupt function and set CHANGE  mode
+  //attachInterrupt(digitalPinToInterrupt(PIR_PIN), detectsMovement, CHANGE );
+
+  
 }
 
 void loop(){
 
   server.handleClient(); 
-
-  //FastLED.setBrightness(brightness);
-  //FastLED.show();
   
   unsigned long currentMillis = millis();  
   if (currentMillis - prevTime >= 1000) {
@@ -259,6 +295,37 @@ void loop(){
     FastLED.setBrightness(brightness);
     FastLED.show();
   }   
+
+  process_pir();
+}
+
+void process_pir()
+{
+  now = millis();
+  pir_status = digitalRead(PIR_PIN);
+  
+  //low = no motion, high = motion
+  if ( old_pir_status != pir_status)
+  {
+    Serial.println(pir_status);
+    if (pir_status == 0)
+    {
+      startTimer = true;
+      lastTrigger = millis();
+    }
+    else
+    {
+      Serial.println("Motion detected  ALARM : ");
+      startTimer = false;
+      brightness = 50;
+    }
+    old_pir_status = pir_status;
+  }
+  if(startTimer && (now - lastTrigger > (timeSeconds*1000))) {
+    Serial.println("Motion stopped...");
+    startTimer = false;
+    brightness = 10;
+  }
 }
 
 void displayNumber(byte number, byte segment, CRGB color) {
