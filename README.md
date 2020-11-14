@@ -1,5 +1,20 @@
 # DigitalClock
-Wall Digital Clock 
+## Wall Digital Clock 
+
+Conexiones
+|Pin	|Dir	|Función 	|
+|-------|-----|-----------------|
+| D0 	| ->  | BUZZER			|
+| D1 	| ->  | SCL CLOCK		|
+| D2 	| <-> | SDA CLOCK		|
+| D3 	|		|	|
+| D4 	| ->  | LED DATA		|
+| D5	|	|	|
+| D6	|	|	|
+| D7 	| <-  | PIR			|
+| D8	|	|	|
+| A0 	| <-  | LIGHT SENSOR	|
+
 
 Basado en 
 https://github.com/leonvandenbeukel/7-Segment-Digital-Clock-V2
@@ -27,7 +42,7 @@ Brillo
 10          110mA
 
 
-
+float batteryLevel = map(analogRead(33), 0.0f, 4095.0f, 0, 100);
 
 
 

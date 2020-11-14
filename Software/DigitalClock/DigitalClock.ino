@@ -1,43 +1,35 @@
 #include <FastLED.h>
 #include <Wire.h>
 #include <RtcDS3231.h>                        // Include RTC library by Makuna: https://github.com/Makuna/Rtc
-#include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
-#include <ESP8266HTTPUpdateServer.h>
+#define FASTLED_INTERNAL
 #include <FastLED.h>
-#include <FS.h>                               // Please read the instructions on http://arduino.esp8266.com/Arduino/versions/2.3.0/doc/filesystem.html#uploading-files-to-file-system
+#include "dc_pir.h"
+#include "server_wifi.h"
+
 #define countof(a) (sizeof(a) / sizeof(a[0]))
 #define NUM_LEDS 30                           // Total of 30 LED's     
-#define DATA_PIN D4                           // OUTPUT_PIN - Change this if you are using another type of ESP board than a WeMos D1 Mini
 #define MILLI_AMPS 500                        // 500mA 
-#define PIR_PIN D7                            // INPUT_PIN
-#define COUNTDOWN_OUTPUT D2                   // OUTPUT_PIN
-
-#define WIFIMODE 2                            // 0 = Only Soft Access Point, 1 = Only connect to local WiFi network with UN/PW, 2 = Both
-
-#if defined(WIFIMODE) && (WIFIMODE == 0 || WIFIMODE == 2)
-  const char* APssid = "CLOCK_AP";        
-  const char* APpassword = "1234567890";  
-#endif
-  
-#if defined(WIFIMODE) && (WIFIMODE == 1 || WIFIMODE == 2)
-  #include "Credentials.h"                    // Create this file in the same directory as the .ino file and add your credentials (#define SID YOURSSID and on the second line #define PW YOURPASSWORD)
-  const char *ssid = SID;
-  const char *password = PW;
-#endif
+#define COUNTDOWN_OUTPUT D5                   // OUTPUT_PIN (Buzzer)
+//D1 -> SCL CLOCK
+//D2 -> SDA CLOCK
+#define DATA_PIN D4                           // OUTPUT_PIN - Change this if you are using another type of ESP board than a WeMos D1 Mini
+#define PIR_PIN   D7                            // INPUT_PIN
+#define LDR_SENSOR_PIN A0                     // INPUT PIN
 
 RtcDS3231<TwoWire> Rtc(Wire);
-ESP8266WebServer server(80);
-ESP8266HTTPUpdateServer httpUpdateServer;
 CRGB LEDs[NUM_LEDS];
+DcPir dc_pir(PIR_PIN);
+ServerWifi server_wifi;
 
 // Settings
+unsigned long _ul_last_trigger = 0;
+bool buzzer_on = false;
 unsigned long prevTime = 0;
-byte r_val = 19;
-byte g_val = 30;
-byte b_val = 230;
+byte r_val = 0;
+byte g_val = 255;
+byte b_val = 0;
 bool dotsOn = true;
-byte brightness = 50;  
+byte brightness = 255;
 float temperatureCorrection = -3.0;
 byte temperatureSymbol = 12;                  // 12=Celcius, 13=Fahrenheit check 'numbers'
 byte clockMode = 0;                           // Clock modes: 0=Clock, 1=Countdown, 2=Temperature, 3=Scoreboard
@@ -71,36 +63,13 @@ uint8_t hora=0;
 uint8_t minuto=0;
 uint8_t segundo = 0;
 
-// Timer: Auxiliary variables
-#define timeSeconds 10
-unsigned long now = millis();
-unsigned long lastTrigger = 0;
-boolean startTimer = false;
-int pir_status = 0;
-int old_pir_status = 0;
-int count_pir = 0;
-
 void updateClock();
 void updateCountdown();
 void updateTemperature();
 void updateScoreboard();
 void displayDots(CRGB color);
-
-/*void IRAM_ATTR detectsMovement() {
-  boolean pir_status = digitalRead(PIR_PIN);
-  if (pir_status == HIGH)
-  {
-    Serial.println("MOTION DETECTED!!!");
-    brightness = 255;
-  }
-  else
-  {
-    Serial.println("Passing to save energy !!!");
-    brightness = 10;
-  }
-  
-
-}*/
+void wifi_client();
+void light_sensor();
 
 void setup() {
   pinMode(COUNTDOWN_OUTPUT, OUTPUT);
@@ -128,11 +97,6 @@ void setup() {
       }
   }
 
-  WiFi.setSleepMode(WIFI_NONE_SLEEP);  
-
-  delay(200);
-  //Serial.setDebugOutput(true);
-
   FastLED.addLeds<WS2812B, DATA_PIN, GRB>(LEDs, NUM_LEDS);  
   FastLED.setDither(false);
   FastLED.setCorrection(TypicalLEDStrip);
@@ -140,144 +104,24 @@ void setup() {
   fill_solid(LEDs, NUM_LEDS, CRGB::Black);
   FastLED.show();
 
-  // WiFi - AP Mode or both
-#if defined(WIFIMODE) && (WIFIMODE == 0 || WIFIMODE == 2) 
-  WiFi.mode(WIFI_AP_STA);
-  WiFi.softAP(APssid, APpassword);    // IP is usually 192.168.4.1
-  Serial.println();
-  Serial.print("SoftAP IP: ");
-  Serial.println(WiFi.softAPIP());
-#endif
+  server_wifi.setup(&LEDs[0]);
 
-  // WiFi - Local network Mode or both
-#if defined(WIFIMODE) && (WIFIMODE == 1 || WIFIMODE == 2) 
-  byte count = 0;
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    // Stop if cannot connect
-    if (count >= 60) {
-      Serial.println("Could not connect to local WiFi.");      
-      return;
-    }
-       
-    delay(500);
-    Serial.print(".");
-    LEDs[count] = CRGB::Green;
-    FastLED.show();
-    count++;
-  }
-  Serial.print("Local IP: ");
-  Serial.println(WiFi.localIP());
+  //Serial.setDebugOutput(true);
 
-  IPAddress ip = WiFi.localIP();
+  dc_pir.setup();
+  pinMode(LDR_SENSOR_PIN, INPUT);
 
-#endif   
-
-  httpUpdateServer.setup(&server);
-
-  // Handlers
-  server.on("/color", HTTP_POST, []() {    
-    r_val = server.arg("r").toInt();
-    g_val = server.arg("g").toInt();
-    b_val = server.arg("b").toInt();
-    server.send(200, "text/json", "{\"result\":\"ok\"}");
-  });
-
-  server.on("/setdate", HTTP_POST, []() { 
-    // Sample input: date = "Dec 06 2009", time = "12:34:56"
-    // Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec
-    String datearg = server.arg("date");
-    String timearg = server.arg("time");
-    Serial.println(datearg);
-    Serial.println(timearg);    
-    char d[12];
-    char t[9];
-    datearg.toCharArray(d, 12);
-    timearg.toCharArray(t, 9);
-    RtcDateTime compiled = RtcDateTime(d, t);
-    Rtc.SetDateTime(compiled);   
-    clockMode = 0;     
-    server.send(200, "text/json", "{\"result\":\"ok\"}");
-
-    hora = compiled.Hour();
-    minuto = compiled.Minute();
-    segundo = compiled.Second();
-
-    digitalWrite(COUNTDOWN_OUTPUT, LOW);
-  });
-
-  server.on("/brightness", HTTP_POST, []() {    
-    brightness = server.arg("brightness").toInt();    
-    server.send(200, "text/json", "{\"result\":\"ok\"}");
-    Serial.println(brightness);
-  });
-  
-  server.on("/countdown", HTTP_POST, []() {    
-    countdownMilliSeconds = server.arg("ms").toInt();     
-    byte cd_r_val = server.arg("r").toInt();
-    byte cd_g_val = server.arg("g").toInt();
-    byte cd_b_val = server.arg("b").toInt();
-    digitalWrite(COUNTDOWN_OUTPUT, LOW);
-    countdownColor = CRGB(cd_r_val, cd_g_val, cd_b_val); 
-    endCountDownMillis = millis() + countdownMilliSeconds;
-    allBlank(); 
-    clockMode = 1;     
-    server.send(200, "text/json", "{\"result\":\"ok\"}");
-  });
-
-  server.on("/temperature", HTTP_POST, []() {   
-    temperatureCorrection = server.arg("correction").toInt();
-    temperatureSymbol = server.arg("symbol").toInt();
-    clockMode = 2;     
-    server.send(200, "text/json", "{\"result\":\"ok\"}");
-  });  
-
-  server.on("/hourformat", HTTP_POST, []() {   
-    hourFormat = server.arg("hourformat").toInt();
-    clockMode = 0;     
-    server.send(200, "text/json", "{\"result\":\"ok\"}");
-    digitalWrite(COUNTDOWN_OUTPUT, LOW);
-  }); 
-
-  server.on("/clock", HTTP_POST, []() {       
-    clockMode = 0;     
-    server.send(200, "text/json", "{\"result\":\"ok\"}");
-    digitalWrite(COUNTDOWN_OUTPUT, LOW);
-  });  
-  
-  // Before uploading the files with the "ESP8266 Sketch Data Upload" tool, zip the files with the command "gzip -r ./data/" (on Windows I do this with a Git Bash)
-  // *.gz files are automatically unpacked and served from your ESP (so you don't need to create a handler for each file).
-  server.serveStatic("/", SPIFFS, "/", "max-age=86400");
-  server.begin();     
-
-  if (!SPIFFS.begin()){
-    Serial.println("An Error has occurred while mounting SPIFFS");
-    return;
-  }
-  Serial.println("SPIFFS contents:");
-  Dir dir = SPIFFS.openDir("/");
-  while (dir.next()) {
-    String fileName = dir.fileName();
-    size_t fileSize = dir.fileSize();
-    Serial.printf("FS File: %s, size: %s\n", fileName.c_str(), String(fileSize).c_str());
-  }
-  Serial.println(); 
-
-  //pinMode(COUNTDOWN_OUTPUT, OUTPUT);
-  //digitalWrite(COUNTDOWN_OUTPUT, LOW);
-
-  pinMode(PIR_PIN, INPUT);    //set again because some library rewrit the setting
-  
-  // Set motionSensor pin as interrupt, assign interrupt function and set CHANGE  mode
-  //attachInterrupt(digitalPinToInterrupt(PIR_PIN), detectsMovement, CHANGE );
-
-  
+  digitalWrite(COUNTDOWN_OUTPUT, HIGH);
+  delay(3000);
+  digitalWrite(COUNTDOWN_OUTPUT, LOW);
+ 
 }
 
 void loop(){
-
-  server.handleClient(); 
+  // WIFI
+  wifi_client();
   
+  //CLOCK
   unsigned long currentMillis = millis();  
   if (currentMillis - prevTime >= 1000) {
     prevTime = currentMillis;
@@ -292,41 +136,60 @@ void loop(){
       updateScoreboard();            
     }
 
+    // Light sensor
+    light_sensor();
+    
     FastLED.setBrightness(brightness);
     FastLED.show();
   }   
 
-  process_pir();
+  // PIR
+  /*boolean const pir_state = dc_pir.process();
+  if (pir_state == false)
+  {
+    brightness = if_day()?BRIGHT_IDLE:BRIGHT_OFF;
+  }else
+  {
+    brightness = if_day()?BRIGHT_HI:BRIGHT_LO;
+  }*/
+
+  // BUZZER
+  if (buzzer_on)
+  {
+    if ((currentMillis - _ul_last_trigger) > (2000))
+    {
+      if (digitalRead(COUNTDOWN_OUTPUT))
+        digitalWrite(COUNTDOWN_OUTPUT, LOW);
+      else
+        digitalWrite(COUNTDOWN_OUTPUT, HIGH);
+      _ul_last_trigger = millis();
+    }
+  }
+  else
+  {
+    digitalWrite(COUNTDOWN_OUTPUT, LOW);
+  }
 }
 
-void process_pir()
+void light_sensor()
 {
-  now = millis();
-  pir_status = digitalRead(PIR_PIN);
+  int sensorValue = analogRead(LDR_SENSOR_PIN);
+  // float voltage = sensorValue * (3.2 / 1023.0);
+  // int i_vol = int(voltage * 10);
+  brightness = map(sensorValue, 0, 1023, 10, 100);
+  // Serial.println(sensorValue);
+  //Serial.println(brightness);
   
-  //low = no motion, high = motion
-  if ( old_pir_status != pir_status)
-  {
-    Serial.println(pir_status);
-    if (pir_status == 0)
-    {
-      startTimer = true;
-      lastTrigger = millis();
-    }
-    else
-    {
-      Serial.println("Motion detected  ALARM : ");
-      startTimer = false;
-      brightness = 50;
-    }
-    old_pir_status = pir_status;
-  }
-  if(startTimer && (now - lastTrigger > (timeSeconds*1000))) {
-    Serial.println("Motion stopped...");
-    startTimer = false;
-    brightness = 10;
-  }
 }
+
+bool if_day()
+{
+  if ((hora > 6) && (hora < 18))
+    return true;
+  else
+    return false;
+}
+
 
 void displayNumber(byte number, byte segment, CRGB color) {
  /*
@@ -371,32 +234,15 @@ void allBlank() {
 
 void updateClock() {  
   RtcDateTime now = Rtc.GetDateTime();
-  // printDateTime(now);    
+  //printDateTime(now);    
 
   int hour = now.Hour();
   int mins = now.Minute();
   int secs = now.Second();
 
-  segundo++;
-  if (segundo == 60)
-  {
-    segundo=0;
-    minuto++;
-    if (minuto == 60)
-    {
-      minuto = 0;
-     hora++; 
-     if (hora == 24)
-     {
-      hora = 0;
-     }
-    }
-  }
- 
-  
-  hour = hora;
-  mins = minuto;
-  secs = segundo;
+  hora = hour;
+  minuto = mins;
+  segundo = secs;
 
   if (hourFormat == 12 && hour > 12)
     hour = hour - 12;
@@ -418,15 +264,7 @@ void updateClock() {
   displayNumber(h2,2,color);
   displayNumber(m1,1,color);
   displayNumber(m2,0,color); 
-  
-  /*scoreboardLeft++;
 
-  displayNumber(scoreboardLeft%10,0,color);
-  displayNumber(scoreboardLeft%10,1,color);
-  displayNumber(scoreboardLeft%10,2,color);
-  displayNumber(scoreboardLeft%10,3,color);*/
-  
-  //displayNumber(2,2,color);
   displayDots(color);  
 }
 
@@ -487,7 +325,8 @@ void updateCountdown() {
     //endCountdown();
     countdownMilliSeconds = 0;
     endCountDownMillis = 0;
-    digitalWrite(COUNTDOWN_OUTPUT, HIGH);
+    buzzer_on = true;
+    _ul_last_trigger = millis();
     return;
   }  
 }
@@ -570,4 +409,55 @@ void printDateTime(const RtcDateTime& dt)
             dt.Minute(),
             dt.Second() );
     Serial.println(datestring);
+}
+
+void wifi_client()
+{
+  SClockData s_data_clock;
+  server_wifi.process(s_data_clock);
+  r_val = s_data_clock.r_val;
+  g_val = s_data_clock.g_val;
+  b_val = s_data_clock.b_val;
+  brightness = s_data_clock.brightness;
+  hourFormat = s_data_clock.hourFormat;
+
+  if (server_wifi.is_new_timedate())
+  {
+    char d[12];
+    char t[9];
+    s_data_clock.date.toCharArray(d, 12);
+    s_data_clock.time.toCharArray(t, 9);
+    RtcDateTime compiled = RtcDateTime(d, t);
+    Rtc.SetDateTime(compiled);   
+    clockMode = 0; 
+    //hora = compiled.Hour();
+    //minuto = compiled.Minute();
+    //segundo = compiled.Second();
+    buzzer_on = false;   
+  }
+
+  if (server_wifi.is_new_countdown())
+  {
+    buzzer_on =false;
+    countdownMilliSeconds = s_data_clock.countdownMilliSeconds;
+    countdownColor = CRGB(s_data_clock.cd_r_val, s_data_clock.cd_g_val, s_data_clock.cd_b_val); 
+    endCountDownMillis = millis() + countdownMilliSeconds;
+    allBlank(); 
+    clockMode = 1;     
+  }
+
+  if (server_wifi.is_new_temperature())
+  {
+    temperatureCorrection = s_data_clock.temperatureCorrection;
+    temperatureSymbol = s_data_clock.temperatureSymbol;
+    clockMode = 2; 
+  }
+
+  if (server_wifi.is_new_hourformat() or server_wifi.is_new_clock())
+  {
+    temperatureCorrection = s_data_clock.temperatureCorrection;
+    temperatureSymbol = s_data_clock.temperatureSymbol;
+    clockMode = 0;
+    buzzer_on = false;
+  }
 }
