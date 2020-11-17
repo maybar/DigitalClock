@@ -13,7 +13,7 @@
 //D1 -> SCL CLOCK
 //D2 -> SDA CLOCK
 #define DATA_PIN D4                           // OUTPUT_PIN - Change this if you are using another type of ESP board than a WeMos D1 Mini
-#define PIR_PIN   D7                            // INPUT_PIN
+#define PIR_PIN   D7                          // INPUT_PIN
 #define LDR_SENSOR_PIN A0                     // INPUT PIN
 
 RtcDS3231<TwoWire> Rtc(Wire);
@@ -174,12 +174,7 @@ void loop(){
 void light_sensor()
 {
   int sensorValue = analogRead(LDR_SENSOR_PIN);
-  // float voltage = sensorValue * (3.2 / 1023.0);
-  // int i_vol = int(voltage * 10);
-  brightness = map(sensorValue, 0, 1023, 10, 100);
-  // Serial.println(sensorValue);
-  //Serial.println(brightness);
-  
+  brightness = map(sensorValue, 0, 1023, 2, 100);
 }
 
 bool if_day()
