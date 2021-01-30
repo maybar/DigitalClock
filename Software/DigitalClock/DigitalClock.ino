@@ -5,7 +5,13 @@
 #include <FastLED.h>
 #include "dc_pir.h"
 #include "server_wifi.h"
+/* ------------------------
+ PLACA: WEMOS MINI D1
+ LOLIN(WEMOS) D1 R2 & Mini
+ Upload speed:921600
+ 80 MHz - 4MB FS:2MB OTA:1019KB
 
+ -------------------------*/
 #define countof(a) (sizeof(a) / sizeof(a[0]))
 #define NUM_LEDS 30                           // Total of 30 LED's     
 #define MILLI_AMPS 500                        // 500mA 
@@ -55,7 +61,7 @@ long numbers[] = {
   0b1111110,  // [9] 9
   0b0000000,  // [10] off
   0b1111000,  // [11] degrees symbol
-  0b0011110,  // [12] C(elsius)
+  0b0110011,  // [12] C(elsius)
   0b1011100,  // [13] F(ahrenheit)
 };
 
@@ -174,7 +180,7 @@ void loop(){
 void light_sensor()
 {
   int sensorValue = analogRead(LDR_SENSOR_PIN);
-  brightness = map(sensorValue, 0, 1023, 2, 100);
+  brightness = map(sensorValue, 0, 1023, 10, 150);
 }
 
 bool if_day()
