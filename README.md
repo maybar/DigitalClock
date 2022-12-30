@@ -2,9 +2,9 @@
 ## Wall Digital Clock 
 
 Conexiones
-|Pin	|Dir	|Función 	|
-|-------|-----|-----------------|
-| D0 	| ->  | BUZZER			|
+|Pin	|Dir	|Función 	|  
+|-------|-----|-----------------|  
+| D0 	| ->  | BUZZER			|  
 | D1 	| ->  | SCL CLOCK		|
 | D2 	| <-> | SDA CLOCK		|
 | D3 	|		|	|

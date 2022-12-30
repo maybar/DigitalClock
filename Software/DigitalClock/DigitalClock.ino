@@ -1,11 +1,11 @@
-#include <FastLED.h>
+#include <FastLED.h>                          // Include FastLED by Danuel Garcia (Lib Manager)
 #include <Wire.h>
 #include <RtcDS3231.h>                        // Include RTC library by Makuna: https://github.com/Makuna/Rtc
 #define FASTLED_INTERNAL
 #include <FastLED.h>
-#include "dc_pir.h"
 #include "server_wifi.h"
 /* ------------------------
+ *  Install Board: esp8266 by ESP8266 Community
  PLACA: WEMOS MINI D1
  LOLIN(WEMOS) D1 R2 & Mini
  Upload speed:921600
@@ -19,12 +19,10 @@
 //D1 -> SCL CLOCK
 //D2 -> SDA CLOCK
 #define DATA_PIN D4                           // OUTPUT_PIN - Change this if you are using another type of ESP board than a WeMos D1 Mini
-#define PIR_PIN   D7                          // INPUT_PIN
 #define LDR_SENSOR_PIN A0                     // INPUT PIN
 
 RtcDS3231<TwoWire> Rtc(Wire);
 CRGB LEDs[NUM_LEDS];
-DcPir dc_pir(PIR_PIN);
 ServerWifi server_wifi;
 
 // Settings
@@ -102,20 +100,21 @@ void setup() {
           Rtc.SetDateTime(compiled);
       }
   }
-
+  Serial.println("RTC started");
+  
   FastLED.addLeds<WS2812B, DATA_PIN, GRB>(LEDs, NUM_LEDS);  
   FastLED.setDither(false);
   FastLED.setCorrection(TypicalLEDStrip);
   FastLED.setMaxPowerInVoltsAndMilliamps(5, MILLI_AMPS);
   fill_solid(LEDs, NUM_LEDS, CRGB::Black);
   FastLED.show();
+  Serial.println("FastlED started!");
 
   server_wifi.setup(&LEDs[0]);
+  Serial.println("WIFI started!");
+  FastLED.clear();
 
   //Serial.setDebugOutput(true);
-
-  dc_pir.setup();
-  pinMode(LDR_SENSOR_PIN, INPUT);
 
   digitalWrite(COUNTDOWN_OUTPUT, HIGH);
   delay(3000);
@@ -148,16 +147,6 @@ void loop(){
     FastLED.setBrightness(brightness);
     FastLED.show();
   }   
-
-  // PIR
-  /*boolean const pir_state = dc_pir.process();
-  if (pir_state == false)
-  {
-    brightness = if_day()?BRIGHT_IDLE:BRIGHT_OFF;
-  }else
-  {
-    brightness = if_day()?BRIGHT_HI:BRIGHT_LO;
-  }*/
 
   // BUZZER
   if (buzzer_on)
@@ -235,7 +224,7 @@ void allBlank() {
 
 void updateClock() {  
   RtcDateTime now = Rtc.GetDateTime();
-  //printDateTime(now);    
+  printDateTime(now);    
 
   int hour = now.Hour();
   int mins = now.Minute();
