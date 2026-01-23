@@ -6,7 +6,7 @@
 #include <FS.h>                               // Please read the instructions on http://arduino.esp8266.com/Arduino/versions/2.3.0/doc/filesystem.html#uploading-files-to-file-system
 #include "server_wifi.h"
 
-#define WIFIMODE 2                            // 0 = Only Soft Access Point, 1 = Only connect to local WiFi network with UN/PW, 2 = Both
+#define WIFIMODE 1                            // 0 = Only Soft Access Point, 1 = Only connect to local WiFi network with UN/PW, 2 = Both
 
 #if defined(WIFIMODE) && (WIFIMODE == 0 || WIFIMODE == 2)
   const char* APssid = "CLOCK_AP";        
